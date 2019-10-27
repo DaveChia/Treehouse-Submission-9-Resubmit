@@ -1,16 +1,10 @@
 'use strict';
 // load modules
 const express = require('express');
-const users = [];
 const morgan = require('morgan');
 const bcrypt = require('bcryptjs');
 var auth = require('basic-auth');
-var http = require('http');
 const { check, validationResult } = require('express-validator');
-const nameValidator = check('name')
-  .exists({ checkNull: true, checkFalsy: true })
-  .withMessage('Please provide a value for "name"');
-
 
 // Create the Express app.
 const app = express();
@@ -21,8 +15,6 @@ app.use(express.json());
 // Setup morgan which gives us HTTP request logging.
 app.use(morgan('dev'));
 
-
-
 const authenticateUser = (req, res, next) => {
   let message = null;
 
@@ -31,48 +23,75 @@ const authenticateUser = (req, res, next) => {
 
   // If the user's credentials are available...
   if (credentials) {
-    // Attempt to retrieve the user from the data store
-    // by their username (i.e. the user's "key"
-    // from the Authorization header).
-    const user = users.find(u => u.username === credentials.name);
 
-    // If a user was successfully retrieved from the data store...
-    if (user) {
-      // Use the bcryptjs npm package to compare the user's password
-      // (from the Authorization header) to the user's password
-      // that was retrieved from the data store.
-      const authenticated = bcrypt
-        .compareSync(credentials.pass, user.password);
+    (async () => {
 
-      // If the passwords match...
-      if (authenticated) {
-        console.log(`Authentication successful for username: ${user.username}`);
+      try {
+        await sequelize.authenticate();
 
-        // Then store the retrieved user object on the request object
-        // so any middleware functions that follow this middleware function
-        // will have access to the user's information.
-        req.currentUser = user;
-      } else {
-        message = `Authentication failure for username: ${user.username}`;
+        const findUser = await User.findOne({
+          where: { emailAddress: credentials.name }
+        });
+
+        // If a user was successfully retrieved from the data store...
+        if (findUser) {
+
+          console.log('here ok');
+          // Use the bcryptjs npm package to compare the user's password
+          // (from the Authorization header) to the user's password
+          // that was retrieved from the data store.
+          const authenticated = bcrypt
+            .compareSync(credentials.pass, findUser.password);
+
+          // If the passwords match...
+          if (authenticated) {
+
+            console.log('here ok2');
+            console.log(`Authentication successful for emailAddress: ${findUser.emailAddress}`);
+
+            // Then store the retrieved user object on the request object
+            // so any middleware functions that follow this middleware function
+            // will have access to the user's information.
+            req.currentUser = findUser;
+
+            next();
+          } else {
+            message = `Authentication failure for emailAddress: ${credentials.name}`;
+
+          }
+
+        } else {
+
+          message = `Email not in database failure for emailAddress: ${credentials.name}`;
+
+        }
+
+        if (message) {
+
+          console.warn(message);
+          // Return a response with a 401 Unauthorized HTTP status code.
+          res.status(401).json({ message: message });
+        }
+
+
+      } catch (error) {
+
+        message = `Error connecting to database`;
+
       }
-    } else {
-      message = `User not found for username: ${credentials.name}`;
-    }
+    })();
+
   } else {
     message = 'Auth header not found';
   }
 
-  // If user authentication failed...
   if (message) {
     console.warn(message);
 
     // Return a response with a 401 Unauthorized HTTP status code.
-    res.status(401).json({ message: 'Access Denied' });
-  } else {
-    // Or if user authentication succeeded...
-    // Call the next() method.
-    next();
+    res.status(401).json({ message: message });
   }
+
 };
 
 // Setup a friendly greeting for the root route.
@@ -83,13 +102,14 @@ app.get('/', (req, res) => {
 app.get('/api/users', authenticateUser, (req, res) => {
 
   const user = req.currentUser;
+
   (async () => {
 
     try {
       await sequelize.authenticate();
 
       const findUser = await User.findOne({
-        where: { emailAddress: user.username },
+        where: { emailAddress: user.emailAddress },
         attributes: ['id', 'firstName', 'lastName', 'emailAddress'],
         include: [
           {
@@ -123,12 +143,15 @@ app.get('/api/users', authenticateUser, (req, res) => {
 
 
 app.post('/api/users', [
-  check('name')
+  check('firstName')
     .exists({ checkNull: true, checkFalsy: true })
-    .withMessage('Please provide a value for "name"'),
-  check('username')
+    .withMessage('Please provide a value for "firstName"'),
+  check('lastName')
     .exists({ checkNull: true, checkFalsy: true })
-    .withMessage('Please provide a value for "username"'),
+    .withMessage('Please provide a value for "lastName"'),
+  check('emailAddress')
+    .exists({ checkNull: true, checkFalsy: true })
+    .withMessage('Please provide a value for "emailAddress"'),
   check('password')
     .exists({ checkNull: true, checkFalsy: true })
     .withMessage('Please provide a value for "password"'),
@@ -145,34 +168,25 @@ app.post('/api/users', [
     return res.status(400).json({ errors: errorMessages });
   }
 
-  // Get the user from the request body.
-  const user = req.body;
-
-  // Hash the new user's password.
-  user.password = bcrypt.hashSync(user.password);
-
-  // Add the user to the `users` array.
-  users.push(user);
-
   (async () => {
 
     try {
       await sequelize.authenticate();
 
       bcrypt.genSalt(10, function (err, salt) {
-        bcrypt.hash(user.password, salt, function (err, hash) {
+        bcrypt.hash(req.body.password, salt, function (err, hash) {
           // Store hash in your password DB.
           (async () => {
 
-            const findEmailExist = await User.findOne({ where: { emailAddress: user.username } });
+            const findEmailExist = await User.findOne({ where: { emailAddress: req.body.emailAddress } });
 
             if (!findEmailExist) {
 
               await User.create({
 
-                firstName: user.name
-                , lastName: user.name,
-                emailAddress: user.username,
+                firstName: req.body.firstName
+                , lastName: req.body.lastName,
+                emailAddress: req.body.emailAddress,
                 password: hash
 
               });
@@ -269,12 +283,12 @@ app.post('/api/courses', [
       await sequelize.authenticate();
 
       // Get the user from the request body.
-      const user = req.body;
-      const findUser = await User.findOne({ where: { emailAddress: user.username } });
+
+      const findUser = await User.findOne({ where: { emailAddress: req.currentUser.emailAddress } });
 
       await Course.create({
-        title: user.title,
-        description: user.description,
+        title: req.body.title,
+        description: req.body.description,
         userId: findUser.id,
       })
 
@@ -362,7 +376,6 @@ app.put('/api/courses/:id', [
     try {
       await sequelize.authenticate();
       // Get the user from the request body.
-      const user = req.body;
       const courseByID = await Course.findByPk(queryID, {
 
         attributes: ['id', 'title', 'description', 'estimatedTime', 'materialsNeeded', 'userId'],
@@ -376,10 +389,10 @@ app.put('/api/courses/:id', [
 
       });
 
-      if (courseByID.student.emailAddress === user.emailAddress) {
+      if (courseByID.student.emailAddress === req.currentUser.emailAddress) {
 
-        courseByID.title = user.title;
-        courseByID.description = user.description;
+        courseByID.title = req.body.title;
+        courseByID.description = req.body.description;
         await courseByID.save();
 
         return res.status(204).end();
@@ -414,7 +427,6 @@ app.delete('/api/courses/:id', authenticateUser, (req, res) => {
     try {
       await sequelize.authenticate();
       // Get the user from the request body.
-      const user = req.body;
       const courseByID = await Course.findByPk(queryID, {
 
         attributes: ['id', 'title', 'description', 'estimatedTime', 'materialsNeeded', 'userId'],
@@ -428,7 +440,7 @@ app.delete('/api/courses/:id', authenticateUser, (req, res) => {
 
       });
 
-      if (courseByID.student.emailAddress === user.emailAddress) {
+      if (courseByID.student.emailAddress === req.currentUser.emailAddress) {
 
         await courseByID.destroy();
         return res.status(204).end();
