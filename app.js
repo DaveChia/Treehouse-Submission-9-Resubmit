@@ -286,13 +286,13 @@ app.post('/api/courses', [
 
       const findUser = await User.findOne({ where: { emailAddress: req.currentUser.emailAddress } });
 
-      await Course.create({
+      const createdCourse = await Course.create({
         title: req.body.title,
         description: req.body.description,
         userId: findUser.id,
       })
 
-      return res.status(201).location('/api/courses/' + findUser.id).end();
+      return res.status(201).location('/api/courses/' + createdCourse.id).end();
 
     } catch (error) {
       if (error.name === 'SequelizeValidationError') {
@@ -512,9 +512,9 @@ const { User, Course } = models;
     console.log('Connection to the database successful!');
     await sequelize.authenticate();
 
-    // Sync the models
-    console.log('Synchronizing the models with the database...');
-    await sequelize.sync({ force: true });
+    // // Sync the models
+    // console.log('Synchronizing the models with the database...');
+    // await sequelize.sync({ force: true });
 
     // process.exit();
   } catch (error) {
